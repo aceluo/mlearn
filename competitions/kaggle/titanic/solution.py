@@ -3,6 +3,10 @@ import pandas as pd
 import numpy as np
 import os
 
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.pipeline import Pipeline
+
 """
 Data columns: 'PassengerId', 'Survived', 'Pclass', 'Name', 'Sex', 'Age', 'SibSp', 'Parch', 'Ticket', 'Fare', 'Cabin', 'Embarked'
 
@@ -112,24 +116,153 @@ def preprocess_data_csv(src_path):
     processed_df.to_csv(os.path.join(src_folder, 'processed_%s' % src_filename))
 
 
+class TitanicDataPreProcessor(object):
+    # columns_to_use = ['PassengerId', 'Pclass', 'Sex', 'Age', 'SibSp', 'Parch', 'Cabin', 'Embarked']
+
+    def __init__(self):
+        self._df = None
+        self._label_encoders = None
+
+    @property
+    def df(self):
+        return self._df
+
+    def _create_label_encoders(self, column_list):
+        self._label_encoders = {}
+        for column_name in column_list:
+            self.df.loc[self.df[column_name].isnull(), column_name] = 'NA'
+            self._label_encoders.update({column_name:
+                                             LabelEncoder().fit(list(set(self.df[column_name])))})
+
+    def inverse_transform(self, column_name, values):
+        if not isinstance(self._label_encoders, dict):
+            raise Exception('Process data firstly')
+        label_encoder = self._label_encoders.get(column_name, None)
+        if not isinstance(label_encoder, LabelEncoder):
+            raise Exception('Invalid label encoder type: {encoder_type}'.format(encoder_type=label_encoder.__class__))
+        return label_encoder.inverse_transform(values)
+
+    def _build_cabin_type(self):
+        def transform_cabin_value(value):
+            new_val = str()
+
+            for c in list(str(value)):
+                if len(c.strip()) > 0 and c not in number_list and c not in list(new_val):
+                    new_val += str(c)
+            if pd.isna(value):
+                new_val = 'NA'
+            return new_val
+
+        column_name = 'CabinType'
+        self._df[column_name] = self._df['Cabin'].apply(transform_cabin_value)
+        return column_name
+
+    def _build_age_group(self):
+
+        column_name = 'AgeGroup'
+        self._df.loc[self._df['Age'].isnull(), 'Age'] = self._df['Age'].mean()
+        self._df[column_name] = pd.cut(self._df['Age'], bins=range(0, 100, 4), labels=False, include_lowest=True)
+
+        return column_name
+
+    def _build_fare_group(self):
+        column_name = 'FareGroup'
+        fare_mean = self._df['Fare'].mean()
+        self._df.loc[self._df['Fare'].isnull(), 'Fare'] = fare_mean
+        self._df[column_name] = pd.cut(self._df['Fare'], bins=range(0, 2000, 10), include_lowest=True,
+                                       labels=False)
+        return column_name
+
+    def process(self, src_csv):
+        """
+        main steps to preprocess data.
+        :return: dataframe after being preprocessed.
+        """
+        df = pd.read_csv(src_csv, header=0)
+
+        self._df = df
+
+        columns_to_encode = ['Sex', 'Embarked']
+        age_group_name = self._build_age_group()
+        cabin_type_name = self._build_cabin_type()
+        fare_group_name = self._build_fare_group()
+        columns_to_encode += [cabin_type_name]
+        self._create_label_encoders(column_list=columns_to_encode)
+
+        for column_name, label_encoder in self._label_encoders.iteritems():
+            print('encode: {column_name}'.format(column_name=column_name))
+            df[column_name] = label_encoder.transform(df[column_name])
+
+        self._label_encoders = None
+
+        return self._df
+
+
 if __name__ == '__main__':
     from sklearn.neural_network import MLPClassifier
+    from sklearn import svm
+    from sklearn.model_selection import cross_val_score
+    from sklearn import metrics
+
     # src_csv_list = ('/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/train/train.csv',
     #                 '/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/test/test.csv',
     #                 )
     # for src_csv in src_csv_list:
     #     preprocess_data_csv(src_csv)
 
-    train_csv = '/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/train/processed_train.csv'
+    train_csv = '/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/train/train.csv'
 
-    test_csv = '/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/test/processed_test.csv'
+    test_csv = '/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/test/test.csv'
 
-    train_pd = pd.read_csv(train_csv)
-    test_pd = pd.read_csv(test_csv)
+    pre_processor = TitanicDataPreProcessor()
 
-    X = train_pd
+    df_train = pre_processor.process(train_csv)
+    df_test = pre_processor.process(test_csv)
+
+    un_used_columns = ['Name', 'Ticket', 'PassengerId']
+
+    df_result = pd.DataFrame()
+    df_result['PassengerId'] = df_test['PassengerId']
+
+    df_test = df_test[df_test.columns.drop(un_used_columns + ['Age', 'Cabin', 'Fare'])]
+
+    X = df_train[df_train.columns.drop(un_used_columns + ['Survived', 'Age', 'Cabin', 'Fare'])]
+    y = df_train['Survived']
+
+    # check covariance of features with 'Survived'
+    X1 = df_train[df_train.columns.drop(un_used_columns + ['Age', 'Cabin'])]
+    for column_name in X1.columns:
+        print('%s ---> cov: %s' % (column_name, X1['Survived'].corr(X1[column_name])))
+
+    # find parameter C
+    for c in range(1, 10, 1):
+        C = c/10.0
+        clf = svm.SVC(C=C)
+        cv_scores = cross_val_score(clf, X, y, cv=5, scoring='f1_macro')
+        print('c = {C}, f1_mean = {f1_mean}, f1_std = {f1_std}'.format(C=C,
+                                                                       f1_mean=cv_scores.mean(),
+                                                                       f1_std=cv_scores.std()))
+    C = 0.9
+    svm_clf = svm.SVC(C=C)
+
+    svm_clf.fit(X, y)
+
+    train_predictions = svm_clf.predict(X)
+    print(metrics.classification_report(y, train_predictions))
+
+    test_predictions = svm_clf.predict(df_test)
 
 
+    df_result['Survived'] = test_predictions
 
+    df_result.to_csv('prediction_C_%s.csv' % C, index=False, columns=['PassengerId', 'Survived'])
 
+    # pipeline = Pipeline()
 
+    # random_forest = RandomForestClassifier()
+
+    # random_forest.fit(X=X, y=y)
+    #
+    # prediction = random_forest.predict(df_test)
+    #
+    # print(prediction)
