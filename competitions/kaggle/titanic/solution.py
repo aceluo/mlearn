@@ -203,6 +203,7 @@ if __name__ == '__main__':
     from sklearn import svm
     from sklearn.model_selection import cross_val_score
     from sklearn import metrics
+    from sklearn.model_selection import GridSearchCV
 
     # src_csv_list = ('/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/train/train.csv',
     #                 '/Users/ace_luo/Developers/mlearn/competitions/kaggle/titanic/data/test/test.csv',
@@ -234,28 +235,64 @@ if __name__ == '__main__':
     for column_name in X1.columns:
         print('%s ---> cov: %s' % (column_name, X1['Survived'].corr(X1[column_name])))
 
-    # find parameter C
-    for c in range(1, 10, 1):
-        C = c/10.0
-        clf = svm.SVC(C=C)
-        cv_scores = cross_val_score(clf, X, y, cv=5, scoring='f1_macro')
-        print('c = {C}, f1_mean = {f1_mean}, f1_std = {f1_std}'.format(C=C,
-                                                                       f1_mean=cv_scores.mean(),
-                                                                       f1_std=cv_scores.std()))
+    # # find parameter C
+    # for c in range(1, 10, 1):
+    #     C = c/10.0
+    #     clf = svm.SVC(C=C)
+    #     cv_scores = cross_val_score(clf, X, y, cv=5, scoring='f1_macro')
+    #     print('c = {C}, f1_mean = {f1_mean}, f1_std = {f1_std}'.format(C=C,
+    #                                                                    f1_mean=cv_scores.mean(),
+    #                                                                    f1_std=cv_scores.std()))
+
+    # use gridsearch for parameters
+
+    # c_range = [c/100.0 for c in range(1, 501)]
+    # gama_range = [g/100 for g in range(1, 201)]
+    #
+    # param_grid = [
+    #     # {'C': c_range, 'kernel': ['linear']},
+    #     {'C': [0.9, 1.57, 1.44, 1.6], }
+    #     # {'C': (0.04,), 'kernel': ['linear']},
+    #     # {'C': (2.4, ), 'gamma': (0.09,), 'kernel': ['rbf']}
+    # ]
+    #
+    # clf = GridSearchCV(estimator=svm.SVC(),
+    #                    param_grid=param_grid,
+    #                    )
+    # clf.fit(X, y)
+    # estimator = clf.best_estimator_
+    # print('%s' % clf.best_params_)
+    #
+
+
     C = 0.9
-    svm_clf = svm.SVC(C=C)
+    kernel = 'linear'
+    params = dict(C=C, kernel=kernel)
+                  # kernel=kernel, gamma=gamma)
+    # kernel = 'rbf'
+    svm_clf = svm.SVC(**params)
 
     svm_clf.fit(X, y)
+    #
+    estimator = svm_clf
 
-    train_predictions = svm_clf.predict(X)
+    est_params = estimator.get_params()
+
+    print(estimator.get_params())
+    C = est_params['C']
+    kernel = est_params['kernel']
+    gamma = est_params['gamma']
+    if gamma == 'auto':
+        print('auto gamma: %s' % (1.0/len(X.columns)))
+    train_predictions = estimator.predict(X)
     print(metrics.classification_report(y, train_predictions))
 
-    test_predictions = svm_clf.predict(df_test)
-
+    test_predictions = estimator.predict(df_test)
 
     df_result['Survived'] = test_predictions
 
-    df_result.to_csv('prediction_C_%s.csv' % C, index=False, columns=['PassengerId', 'Survived'])
+    df_result.to_csv('prediction_{kernel}_gamma{gamma}_C{C}.csv'.format(C=C, gamma=gamma, kernel=kernel), index=False,
+                     columns=['PassengerId', 'Survived'])
 
     # pipeline = Pipeline()
 
